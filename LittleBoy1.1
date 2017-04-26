@@ -1,0 +1,205 @@
+# 登录学校官网抓取并计算学分绩
+# Author:hugo
+# email:hugooood@outlook.com
+# CreateTime:2017/4/24
+# LastModifyTime:2017/4/26
+
+import requests
+try:
+    import cookielib
+except:
+    import http.cookiejar as cookielib
+import re
+import time
+import os.path
+try:
+    from PIL import Image
+except:
+    pass
+
+from bs4 import BeautifulSoup
+
+
+# 构造 Request headers
+agent = 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Mobile Safari/537.36'
+headers = {
+    "Host": "218.59.189.229",
+    "Referer": "http://218.59.189.229/",
+    "User-Agent": agent,
+    "service":"http://218.59.189.229/login",
+    "Accept-Encoding":"gzip, deflate, sdch",
+    "Accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language":"zh-CN,zh;q=0.8",
+    "Cache-Control":"no-cache",
+    "Connection":"keep-alive",
+    "Pragma":"no-cache",
+    "Upgrade-Insecure-Requests":"1"
+}
+
+# 使用登录cookie信息
+session = requests.session()
+
+def get_lt():
+    '''_lt 是一个动态变化的参数'''
+    index_url = 'http://218.59.189.229/login'
+    # 获取登录时需要用到的_lt
+    index_page = session.get(index_url, headers=headers)
+    html = index_page.text
+    pattern = r'name="lt" value="(.*?)"'
+    # 这里的_lt 返回的是一个list
+    _lt = re.findall(pattern, html)
+    return _lt[0]
+
+# 获取验证码
+def get_captcha():
+    t = str(int(time.time() * 1000))
+    captcha_url = 'http://218.59.189.229/cas/getVerificationCode?dateTime=' + t
+    r = session.get(captcha_url, headers=headers)
+    with open('picture\captcha.jpg', 'wb') as f:
+        f.write(r.content)
+        f.close()
+    # 用pillow 的 Image 显示验证码
+    # 如果没有安装 pillow 到源代码所在的目录去找到验证码然后手动输入
+    try:
+        im = Image.open('picture\captcha.jpg')
+        im.show()
+        im.close()
+    except:
+        print(u'请到 %s 目录找到captcha.jpg 手动输入' % os.path.abspath('picture\captcha.jpg'))
+    captcha = input("请输入验证码\n>")
+    #图片改名(路径要转义)
+    os.rename('picture\captcha.jpg', 'picture\\'+captcha+'.jpg')
+    return captcha
+
+def isLogin():
+    # 通过查看用户个人信息来判断是否已经登录
+    login_code = session.get("http://218.59.189.226/jsxsd/kscj/cjcx_list").status_code
+    
+    if login_code == 200:        
+        return True
+    else:
+        return False
+
+#登录
+def login(username, password):
+    post_url = "http://218.59.189.229/cas/login?service=http%3A%2F%2F218.59.189.229%2Flogin"
+    postdata = {
+             "password": password,
+             "username": username,
+             "vcode":get_captcha(),
+             "execution":"e1s1",
+             "_eventId":"submit",
+             "lt":get_lt()    
+    }
+
+    login_page = session.post(post_url, data=postdata,headers=headers)
+
+
+def getScore():
+    courseUrl= "http://218.59.189.229/studentPortal"
+    scoreUrl = "http://218.59.189.226/jsxsd/kscj/cjcx_list"
+
+    source_data = session.get(scoreUrl)
+
+
+    with open('text\\'+username+'.txt', 'wb') as f:
+        f.write(source_data.content)#比特流
+        #print(type(source_data.content))
+        print("> 原始数据抓取成功并保存！")
+
+    #------------------------------#
+    #source_data.text: <str>类型   #
+    #bsObj:<bs4.BeautifulSoup>类型 #
+    #------------------------------#
+    bsObj = BeautifulSoup(source_data.text,"html.parser")
+
+    #div = bsObj.find('table',{'id':'dataList'})['tr']
+    td = bsObj.find_all('td')#存放标签的容器类似数组？
+    
+    a = 0 #考试成绩*学分
+    b = 0 #学分
+    tdId = 0 #标签ID
+    CourseId = 0 #统计必修课
+    print('课程ID 课程名 考试成绩 学分 课程性质')
+    for i in td:#遍历抓取的td标签
+    #tdId%10 == 1:代表从第一门课开始
+        try:
+            if tdId%10 == 1 and td[tdId+3].string != td[tdId+13].string:
+                print(
+                      td[tdId].string,#课程ID
+                      td[tdId+3].string,#课程名
+                      td[tdId+4].string,#考试成绩
+                      td[tdId+5].string,#学分
+                      td[tdId+8].string#课程性质
+                      )
+                if td[tdId+8].string == "必修":
+                    CourseId+=1
+                    if td[tdId+4].string == "良好" or td[tdId+4].string == "优秀":
+                        temp = 80 #temp存放成绩的临时变量
+                    elif td[tdId+4].string == "通过":
+                        temp = 70
+                    elif float(td[tdId+4].string) < 60:
+                        temp = 0
+                    else:
+                        temp = float(td[tdId+4].string)
+
+                    a = float(td[tdId+5].string) * temp + a
+                    b = float(td[tdId+5].string) + b
+                    print('CourseId:',CourseId,'a:',a,'b:',b,'\n')
+            else:
+                pass
+        except:
+                print('-------------------')
+                print(
+                      td[tdId].string,#课程ID
+                      td[tdId+3].string,#课程名
+                      td[tdId+4].string,#考试成绩
+                      td[tdId+5].string,#学分
+                      td[tdId+8].string#课程性质
+                      )
+                if td[tdId+8].string == "必修":
+                    CourseId+=1
+                    if td[tdId+4].string == "良好" or td[tdId+4].string == "优秀":
+                        temp = 80 #temp存放成绩的临时变量
+                    elif td[tdId+4].string == "通过":
+                        temp = 70
+                    elif float(td[tdId+4].string) < 60:
+                        temp = 0
+                    else:
+                        temp = float(td[tdId+4].string)
+
+                    a = float(td[tdId+5].string) * temp + a
+                    b = float(td[tdId+5].string) + b
+                    print('CourseId:',CourseId,'a:',a,'b:',b,'\n')
+        tdId+=1
+    print("已修学分:",b)
+    print("学分绩:",a//b)
+    print("必修课程:",CourseId)
+
+
+
+
+if __name__ == '__main__':
+    OK = True
+    username = input("请输入你的用户名\n>  ")
+
+    while OK:
+        if re.match(r"^\d{12}$", username): #检验学号
+            print('稍等片刻......')
+            time.sleep(1)
+            OK = False
+        else:
+            print('学号出错了')
+            print('-.-!!!!!')
+            time.sleep(1)
+            print('请输入正确的学号')
+            username = input(">  ")
+
+
+    password = input("请输入你的密码\n>  ")
+    login(username, password)
+    if isLogin():
+        print("> 登录成功!")
+    else:
+        print("> 登录失败!")
+    getScore()
